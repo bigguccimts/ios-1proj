@@ -1,0 +1,1220 @@
+#! /bin/sh
+
+# made by xduric06
+# 14/15
+
+export POSIXLY_CORRECT=yes
+
+AFTER=""
+BEFORE=""
+GENDER=""
+COMMAND=""
+INPUT=""
+FILTERED=""
+VALID=""
+WIDTH=""
+TMP=""
+FILTER_SET="0"
+WIDTH_SET="0"
+
+#prints help
+printHelp() {
+	echo "Made by Matúš Ďurica (xduric06) VUT FIT v Brně 2022"
+	echo " "
+	echo "\033[1mNAME\033[0m"
+	echo "      corona          - filters and prints statistics of files with covid patients"
+	echo " "
+	echo "\033[1mSYNOPSIS\033[m"
+	echo "      corona [-h] [FILTERS] [COMMAND] [LOG [LOG2 [...]]"
+	echo " "
+	echo "\033[1mCOMMANDS\033[m"
+	echo "      infected        - prints the amount of infected"
+	echo "      merge           - merges multiple files together"
+	echo "      gender          - prints the amount of infected for each gender"
+	echo "      age             - prints the amount of infected for different age groups"
+	echo "      daily           - prints the amount of infected for each day"
+	echo "      monthly         - prints the amount of infected for each month"
+	echo "      yearly          - prints the amount of infected for each year"
+	echo "      countries       - prints the amount of infected for different countries (without Czech Republic, code CZ)"
+	echo "      districts       - prints the amount of infected for different districts in Czech Republic"
+	echo "      regions         - prints the amount of infected for different regions of Czech Republic"
+	echo " "
+	echo "\033[1mFILTERS\033[m"
+	echo "      -a \033[1mDATETIME\033[m     - only prints entries \033[1mAFTER\033[0m and \033[1mEQUAL\033[0m to the entered date "
+	echo "      -b \033[1mDATETIME\033[m     - only prints entries \033[1mBEFORE\033[0m and \033[1mEQUAL\033[0m to the entered date"
+	echo "      \033[1mDATETIME\033[m format - yyyy-mm-dd"
+	echo "                      - \033[1mDATETIME\033[m must be after \033[1m1970-01-01\033[0m"
+	echo " "
+	echo "      -g \033[1mGENDER\033[m       - only prints entries \033[1mEQUAL\033[0m to the entered gender"
+	echo "      \033[1mGENDER\033[m format   - M or Z"
+	echo " "
+	echo "      -s \033[1mWIDTH\033[m        - graphically prints statistics for gender, age, daily, monthly, yearly, countries, districts, regions"
+	echo "                      - \033[1mWIDTH\033[m doesnt need to be set"
+	echo "      \033[1mWIDTH\033[m format    - unsigned integer bigger than 0"
+}
+
+#validation of entered date in -a and -b filters, essentialy the same as age and date validation below
+argDateChck() {
+	return=$(echo "$1" | awk \
+		'{
+        if($0 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)
+        {
+            if($0 >= "1970-01-01")
+            {
+                if($0 ~ /^[0-9]{4}-0[1]{1}.*$/ || $0 ~ /^[0-9]{4}-0[3]{1}.*$/ || $0 ~ /^[0-9]{4}-0[5]{1}.*$/ || $0 ~ /^[0-9]{4}-0[7-8]{1}.*$/ || $0 ~ /^[0-9]{4}-1[0]{1}.*$/ || $0 ~ /^[0-9]{4}-1[2]{1}.*$/)
+                {
+                    if($0 ~ /^.*0[1-9]{1}$/ || $0 ~ /^.*[1-2]{1}[0-9]{1}$/ || $0 ~ /^.*3[0-1]{1}$/)
+                    {
+                        print $0;
+                    }
+                }
+                else if($0 ~ /^[0-9]{4}-0[2]{1}.*$/)
+                {
+                    #checks if the year was 2020, if so 02-29 is valid (leap year; pointless to check other years since covid wasnt around back then)
+                    if($0 ~ /^.*0[1-9]{1}$/ || $1 ~ /^.*1[0-9]{1}$/ || $0 ~ /^.*2[0-8]{1}$/ || $0 ~ /^2020-02-[1-2]{1}[0-9]{1}$/)
+                    {
+                        print $0;
+                    }
+                }
+                else if($0 ~ /^[0-9]{4}-0[4]{1}.*$/ || $0 ~ /^[0-9]{4}-0[6]{1}.*$/ || $0 ~ /^[0-9]{4}-0[9]{1}.*$/ || $0 ~ /^[0-9]{4}-1[1]{1}.*$/)
+                {
+                    if($0 ~ /^.*0[1-9]{1}$/ || $0 ~ /^.*[1-2]{1}[0-9]{1}$/ || $0 ~ /^.*3[0]{1}$/)
+                    {
+                        print $0;
+                    }
+                }
+            }
+        }
+    }')
+	echo "$return"
+}
+
+#filter -a
+after() {
+	return=$(echo "$1" | awk -v after="$AFTER" -F, '{if ($2 >= after) print $0;}')
+	echo "$return"
+}
+
+#filter -b
+before() {
+	return=$(echo "$1" | awk -v after="$BEFORE" -F, '{if ($2 <= after) print $0;}')
+	echo "$return"
+}
+
+#filter -g
+gender() {
+	return=$(echo "$1" | awk -v gender="$GENDER" -F, '{if ($4 == gender) print $0;}')
+	echo "$return"
+}
+
+#divides arguments into their variables
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		-a)
+			#checks if filter -a wasnt used more than once, if it was, script prints error to stderr and exits
+			if [ -z "$AFTER" ]; then
+				#checks if entered date is valid, if not throws error and exits
+				TMP=$(argDateChck "$2")
+				if [ -n "$TMP" ]; then
+					AFTER="$TMP"
+					FILTER_SET="1"
+					shift
+					shift
+				else
+					echo "Invalid date: $2. Try using format yyyy-mm-dd" | cat 1>&2
+					exit 1
+				fi
+			else
+				echo "Invalid combination of filters. Try -h for help." | cat 1>&2
+				exit 1
+			fi
+			;;
+		-b)
+			#checks if filter -b wasnt used more than once, if it was, script prints error to stderr and exits
+			if [ -z "$BEFORE" ]; then
+				#checks if entered date is valid, if not throws error and exits
+				TMP=$(argDateChck "$2")
+				if [ -n "$TMP" ]; then
+					BEFORE="$TMP"
+					FILTER_SET="1"
+					shift
+					shift
+				else
+					echo "Invalid date: $2. Try using format yyyy-mm-dd" | cat 1>&2
+					exit 1
+				fi
+			else
+				echo "Invalid combination of filters. Try -h for help." | cat 1>&2
+				exit 1
+			fi
+			;;
+		-g)
+			#checks if filter -g wasnt used more than once, if it was, script prints error to stderr and exits
+			if [ -z "$GENDER" ]; then
+				#checks if the entered gender is M or Z, if not throws error
+				if [ "$2" = "M" ] || [ "$2" = "Z" ]; then
+					GENDER="$2"
+					FILTER_SET="1"
+					shift
+					shift
+				else
+					echo "Invalid gender: $2. Try using M or Z" | cat 1>&2
+					exit 1
+				fi
+			else
+				echo "Invalid combination of filters. Try -h for help." | cat 1>&2
+				exit 1
+			fi
+			;;
+		-s)
+			#checks if filter -s wasnt used more than once, if it was, script prints error to stderr and exits
+			if [ -z "$NO_WIDTH" ] && [ -z "$WIDTH" ]; then
+				#checks if command entered isnt infected, if yes throws error and exits
+				if [ "$COMMAND" != "infected" ]; then
+					#checks if the following number is number with correct format
+					TMP=$(echo "$2" | grep -E '[1-9][0-9]+')
+					if [ -z "$TMP" ]; then
+						TMP=$(echo "$2" | grep -E '[1-9]')
+					fi
+					#if the number matched the patterns above
+					if [ -n "$TMP" ]; then
+						WIDTH="$TMP"
+						FILTER_SET="1"
+						WIDTH_SET="1"
+						shift
+						shift
+					elif [ -z "$TMP" ]; then
+						NO_WIDTH="-s"
+						FILTER_SET="1"
+						WIDTH_SET="1"
+						shift
+					fi
+				else
+					echo "Can not use -s with command infected. Try -h to display help" | cat 1>&2
+					exit 1
+				fi
+			else
+				echo "Invalid combination of filters. Try -h to display help" | cat 1>&2
+				exit 1
+			fi
+			;;
+		-h)
+			printHelp
+			exit 0
+			;;
+		merge)
+			#redundant, program works the same with or without the command
+			shift
+			;;
+		infected)
+			#checks if filter -s with or without number is entered, if yes throws error and exits
+			if [ -z "$WIDTH" ] && [ -z "$NO_WIDTH" ]; then
+				COMMAND="$1"
+				shift
+			else
+				echo "Can not use -s with command infected. Try -h to display help" | cat 1>&2
+				exit 1
+			fi
+			;;
+		gender)
+			COMMAND="$1"
+			shift
+			;;
+		age)
+			COMMAND="$1"
+			shift
+			;;
+		daily)
+			COMMAND="$1"
+			shift
+			;;
+		monthly)
+			COMMAND="$1"
+			shift
+			;;
+		yearly)
+			COMMAND="$1"
+			shift
+			;;
+		countries)
+			COMMAND="$1"
+			shift
+			;;
+		districts)
+			COMMAND="$1"
+			shift
+			;;
+		regions)
+			COMMAND="$1"
+			shift
+			;;
+		*.csv)
+			INPUT=$INPUT$(cat "$1")
+			shift
+			;;
+		*.gz)
+			INPUT=$INPUT$(gzip -d -c "$1")
+			shift
+			;;
+		*.bz2)
+			INPUT=$INPUT$(bzcat "$1")
+			shift
+			;;
+		*)
+			echo "Invalid argument. Use -h for help" | cat 1>&2
+			exit 1
+			;;
+	esac
+done
+
+#if no files are on the input, script will be reading from stdin
+if [ -z "$INPUT" ]; then
+	INPUT=$(cat)
+fi
+
+#checks if -s filters isnt used without a command, if yes throws error and exits
+if [ -z "$COMMAND" ] && [ "$WIDTH_SET" -eq 1 ]; then
+	echo "Can not use -s filter without command. Use -h for help" | cat 1>&2
+	exit 1
+fi
+
+#if no command or merge command with no filter is entered, script does not validate, in other instances it is validating
+if ([ -z "$COMMAND" ] && [ "$FILTER_SET" -eq 0 ]) || ([ "$COMMAND" = "merge" ] && [ "$FILTER_SET" -eq 0 ]); then
+	#filters out all headers, so only one will be printed later
+	VALID=$(echo "$INPUT" | sed '/id,datum,vek,pohlavi,kraj_nuts_kod,okres_lau_kod,nakaza_v_zahranici,nakaza_zeme_csu_kod,reportovano_khs/d')
+else
+	#first sed gets rid of spaces, second gets rid of empty lines
+	#lines are being run through multiple regular expressions which determine, if the date has correct amount of days for each month
+	VALID=$(echo "$INPUT" | sed 's/ //g' | sed '/^\s*$/d' | awk -F, \
+		'{
+            #if the validation finds the header, it will be skipped
+            if($0 ~ /id,datum,vek,pohlavi,kraj_nuts_kod,okres_lau_kod,nakaza_v_zahranici,nakaza_zeme_csu_kod,reportovano_khs/)
+            {
+                next;
+            }
+            #checks if column with age matches pattern, if not throws error
+            if($3 ~ /^[0-9]+$/ || $3 == "")
+            {
+                #if date column is empty, it is valid
+                if($2 == "")
+                {
+                    print $0;
+                }
+                #checks if column with date matches pattern yyyy-mm-dd, if not throws error
+                else if($2 ~ /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)
+                {
+                    #date has to be after 1970-01-01, if not throws error
+                    if($2 >= "1970-01-01")
+                    {
+                        #checks if date matches pattern for month with 31 days
+                        if($2 ~ /^[0-9]{4}-0[1]{1}.*$/ || $2 ~ /^[0-9]{4}-0[3]{1}.*$/ || $2 ~ /^[0-9]{4}-0[5]{1}.*$/ || $2 ~ /^[0-9]{4}-0[7-8]{1}.*$/ || $2 ~ /^[0-9]{4}-1[0]{1}.*$/ || $2 ~ /^[0-9]{4}-1[2]{1}.*$/)
+                        {
+                            #checks if day is between 01-31, if not throws error
+                            if($2 ~ /^.*0[1-9]{1}$/ || $2 ~ /^.*[1-2]{1}[0-9]{1}$/ || $2 ~ /^.*3[0-1]{1}$/)
+                            {
+                                print $0;
+                            }
+                            else
+                            {
+                                print "Invalid date: " $0 | "cat 1>&2"
+                            }
+                        }
+                        #checks if date matches pattern for february
+                        else if($2 ~ /^[0-9]{4}-0[2]{1}.*$/)
+                        {
+                            #checks if day is between 01-28, if not throws error, in case of leap year (only 2020, because covid wasnt during other leap year), checks if day is between 01-29, if not throws error
+                            if($2 ~ /^.*0[1-9]{1}$/ || $2 ~ /^.*1[0-9]{1}$/ || $2 ~ /^.*2[0-8]{1}$/ || $2 ~ /^2020-02-[1-2]{1}[0-9]{1}$/)
+                            {
+                                print $0;           
+                            }
+                            else
+                            {
+                                print "Invalid date: " $0 | "cat 1>&2"
+                            }   
+                        }
+                        #checks if date matches pattern for month with 30 days
+                        else if($2 ~ /^[0-9]{4}-0[4]{1}.*$/ || $2 ~ /^[0-9]{4}-0[6]{1}.*$/ || $2 ~ /^[0-9]{4}-0[9]{1}.*$/ || $2 ~ /^[0-9]{4}-1[1]{1}.*$/)
+                        {
+                            #checks if day is between 01-30, if not throws error
+                            if($2 ~ /^.*0[1-9]{1}$/ || $2 ~ /^.*[1-2]{1}[0-9]{1}$/ || $2 ~ /^.*3[0]{1}$/)
+                            {
+                                print $0;
+                            }
+                            else
+                            {
+                                print "Invalid date: " $0 | "cat 1>&2"
+                            }
+                        }
+                        else
+                        {
+                            print "Invalid date: " $0 | "cat 1>&2"
+                        }
+                    }
+                    else
+                    {
+                        print "Invalid date: " $0 | "cat 1>&2"
+                    }
+                }
+                else
+                {
+                    print "Invalid date: " $0 | "cat 1>&2"
+                }
+            }
+            else
+            {
+                print "Invalid age: " $0 | "cat 1>&2"
+            }
+        }')
+fi
+
+#validated entries are used in variable FILTERED, so it can be used in multiple filters at the same time
+#if filters are not used it will still be in FILTERED and therefore can be used below in COMMANDS
+FILTERED="$VALID"
+if [ -n "$AFTER" ]; then
+	FILTERED=$(after "$FILTERED")
+fi
+if [ -n "$BEFORE" ]; then
+	FILTERED=$(before "$FILTERED")
+fi
+if [ -n "$GENDER" ]; then
+	FILTERED=$(gender "$FILTERED")
+fi
+
+#based on the COMMAND variable, performs the correct code
+case "$COMMAND" in
+	#checks if COMMAND variable is empty, if yes script prints the header and the content of FILTERED variable
+	"")
+		#prints header
+		echo "id,datum,vek,pohlavi,kraj_nuts_kod,okres_lau_kod,nakaza_v_zahranici,nakaza_zeme_csu_kod,reportovano_khs"
+		if [ -n "$FILTERED" ]; then
+			echo "$FILTERED"
+		fi
+		;;
+
+	infected)
+		echo "$FILTERED" | wc -l
+		;;
+	gender)
+		if [ -n "$WIDTH" ]; then
+			OUT=$(echo "$FILTERED" | awk -v width="$WIDTH" -F, \
+				'{
+            if($4 == "M" || $4 == "Z") {
+                genders[$4]++;
+            }
+            if($4 == ""){
+                genders["None"]++;
+            } 
+            } END {
+                max = 0;
+                for (gender in genders){
+                    if(genders[gender]>max){
+                        max=genders[gender];
+                    }
+                }
+                width=max/width
+                printf("M: ");
+                #-(genders["M"]/width)%1 is rounding down, same applies in other commands
+                for(i=0;i<(genders["M"]/width)-(genders["M"]/width)%1; i++){
+                    printf("#");
+                }
+                printf("\n");
+                printf("Z: ");
+                for(i=0;i<(genders["Z"]/width)-(genders["Z"]/width)%1; i++){
+                    printf("#");
+                }
+                printf("\n");
+                if(genders["None"] > 0){
+                    printf("None: ");
+                    for(i=0;i<(genders["None"]/width)-(genders["None"]/width)%1; i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+        }')
+			echo "$OUT"
+		elif [ "$NO_WIDTH" = "-s" ]; then
+			OUT=$(echo "$FILTERED" | awk -F, \
+				'{
+            if($4 == "M" || $4 == "Z") {
+                genders[$4]++;
+            }
+            if($4 == ""){
+                genders["None"]++;
+            } 
+            } END {
+                printf("M: ");
+                for(i=0;i<(genders["M"]/100000)-(genders["M"]/100000)%1; i++){
+                    printf("#");
+                }
+                printf("\n");
+                printf("Z: ");
+                for(i=0;i<(genders["Z"]/100000)-(genders["Z"]/100000)%1; i++){
+                    printf("#");
+                }
+                printf("\n");
+                if(genders["None"] > 0){
+                    printf("None: ");
+                    for(i=0;i<(genders["None"]/100000)-(genders["None"]/100000)%1; i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+        }')
+			echo "$OUT"
+		else
+			OUT=$(echo "$FILTERED" | awk -F, \
+				'{
+            if($4 == "M" || $4 == "Z") {
+                genders[$4]++;
+            }
+            if($4 == ""){
+                genders["None"]++;
+            } 
+            } END {
+                printf("M: %d\n", genders["M"]);
+                printf("Z: %d\n", genders["Z"]);
+                if(genders["None"] > 0){
+                    printf("None: %d\n", genders["None"]);
+                }
+        }')
+			echo "$OUT"
+		fi
+		;;
+	age)
+		if [ -n "$WIDTH" ]; then
+			# sort -n
+			OUT=$(echo "$FILTERED" | awk -v width="$WIDTH" -F, \
+				'{
+            if($3 >= 0 && $3 <= 5){
+                ages["0-5"]++;
+            }
+            if($3 >= 6 && $3 <= 15){
+                ages["6-15"]++;
+            }
+            if($3 >= 16 && $3 <= 25){
+                ages["16-25"]++;
+            }
+            if($3 >= 26 && $3 <= 35){
+                ages["26-35"]++;
+            }
+            if($3 >= 36 && $3 <= 45){
+                ages["36-45"]++;
+            }
+            if($3 >= 46 && $3 <= 55){
+                ages["46-55"]++;
+            }
+            if($3 >= 56 && $3 <= 65){
+                ages["56-65"]++;
+            }
+            if($3 >= 66 && $3 <= 75){
+                ages["66-75"]++;
+            }
+            if($3 >= 76 && $3 <= 85){
+                ages["76-85"]++;
+            }
+            if($3 >= 86 && $3 <= 95){
+                ages["86-95"]++;
+            }
+            if($3 >= 96 && $3 <= 105){
+                ages["96-105"]++;
+            }
+            if($3 > 105){
+                ages[">105"]++;
+            }
+            if($3 == ""){
+                ages["None"]++;
+            }
+        } END {
+            max = 0;
+            for(age in ages){
+                if(ages[age]>max){
+                    max = ages[age];
+                }
+            }
+            width=max/width
+
+            printf("0-5   : ");
+            for(i=0;i<(ages["0-5"]/width)-(ages["0-5"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("6-15  : ");
+            for(i=0;i<(ages["6-15"]/width)-(ages["6-15"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("16-25 : ");
+            for(i=0;i<(ages["16-25"]/width)-(ages["16-25"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("26-35 : ");
+            for(i=0;i<(ages["26-35"]/width)-(ages["26-35"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("36-45 : ");
+            for(i=0;i<(ages["36-45"]/width)-(ages["36-45"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("46-55 : ");
+            for(i=0;i<(ages["46-55"]/width)-(ages["46-55"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("56-65 : ");
+            for(i=0;i<(ages["56-65"]/width)-(ages["56-65"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("66-75 : ");
+            for(i=0;i<(ages["66-75"]/width)-(ages["66-75"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("76-85 : ");
+            for(i=0;i<(ages["76-85"]/width)-(ages["76-85"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("86-95 : ");
+            for(i=0;i<(ages["86-95"]/width)-(ages["86-95"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("96-105: ");
+            for(i=0;i<(ages["96-105"]/width)-(ages["96-105"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf(">105  : ");
+            for(i=0;i<(ages[">105"]/width)-(ages[">105"]/width)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            if(ages["None"]>0)
+            {
+                printf("None  : ");
+                for(i=0;i<(ages["None"]/width)-(ages["None"]/width)%1;i++)
+                {
+                    printf("#");
+                }
+                printf("\n");
+            }
+        }')
+			echo "$OUT"
+		elif [ "$NO_WIDTH" = "-s" ]; then
+			OUT=$(echo "$FILTERED" | awk -F, \
+				'{
+            if($3 >= 0 && $3 <= 5){
+                ages["0-5"]++;
+            }
+            if($3 >= 6 && $3 <= 15){
+                ages["6-15"]++;
+            }
+            if($3 >= 16 && $3 <= 25){
+                ages["16-25"]++;
+            }
+            if($3 >= 26 && $3 <= 35){
+                ages["26-35"]++;
+            }
+            if($3 >= 36 && $3 <= 45){
+                ages["36-45"]++;
+            }
+            if($3 >= 46 && $3 <= 55){
+                ages["46-55"]++;
+            }
+            if($3 >= 56 && $3 <= 65){
+                ages["56-65"]++;
+            }
+            if($3 >= 66 && $3 <= 75){
+                ages["66-75"]++;
+            }
+            if($3 >= 76 && $3 <= 85){
+                ages["76-85"]++;
+            }
+            if($3 >= 86 && $3 <= 95){
+                ages["86-95"]++;
+            }
+            if($3 >= 96 && $3 <= 105){
+                ages["96-105"]++;
+            }
+            if($3 > 105){
+                ages[">105"]++;
+            }
+            if($3 == ""){
+                ages["None"]++;
+            }
+        } END {
+            printf("0-5   : ");
+            for(i=0;i<(ages["0-5"]/10000)-(ages["0-5"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("6-15  : ");
+            for(i=0;i<(ages["6-15"]/10000)-(ages["6-15"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("16-25 : ");
+            for(i=0;i<(ages["16-25"]/10000)-(ages["16-25"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("26-35 : ");
+            for(i=0;i<(ages["26-35"]/10000)-(ages["26-35"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("36-45 : ");
+            for(i=0;i<(ages["36-45"]/10000)-(ages["36-45"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("46-55 : ");
+            for(i=0;i<(ages["46-55"]/10000)-(ages["46-55"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("56-65 : ");
+            for(i=0;i<(ages["56-65"]/10000)-(ages["56-65"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("66-75 : ");
+            for(i=0;i<(ages["66-75"]/10000)-(ages["66-75"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("76-85 : ");
+            for(i=0;i<(ages["76-85"]/10000)-(ages["76-85"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("86-95 : ");
+            for(i=0;i<(ages["86-95"]/10000)-(ages["86-95"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf("96-105: ");
+            for(i=0;i<(ages["96-105"]/10000)-(ages["96-105"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            printf(">105  : ");
+            for(i=0;i<(ages[">105"]/10000)-(ages[">105"]/10000)%1;i++){
+                printf("#");
+            }
+            printf("\n");
+            if(ages["None"]>0)
+            {
+                printf("None  : ");
+                for(i=0;i<(ages["None"]/10000)-(ages["None"]/10000)%1;i++)
+                {
+                    printf("#");
+                }
+                printf("\n");
+            }
+        }')
+			echo "$OUT"
+		else
+			OUT=$(echo "$FILTERED" | awk -F, \
+				'{
+            if($3 >= 0 && $3 <= 5){
+                ages["0-5"]++;
+            }
+            if($3 >= 6 && $3 <= 15){
+                ages["6-15"]++;
+            }
+            if($3 >= 16 && $3 <= 25){
+                ages["16-25"]++;
+            }
+            if($3 >= 26 && $3 <= 35){
+                ages["26-35"]++;
+            }
+            if($3 >= 36 && $3 <= 45){
+                ages["36-45"]++;
+            }
+            if($3 >= 46 && $3 <= 55){
+                ages["46-55"]++;
+            }
+            if($3 >= 56 && $3 <= 65){
+                ages["56-65"]++;
+            }
+            if($3 >= 66 && $3 <= 75){
+                ages["66-75"]++;
+            }
+            if($3 >= 76 && $3 <= 85){
+                ages["76-85"]++;
+            }
+            if($3 >= 86 && $3 <= 95){
+                ages["86-95"]++;
+            }
+            if($3 >= 96 && $3 <= 105){
+                ages["96-105"]++;
+            }
+            if($3 > 105){
+                ages[">105"]++;
+            }
+            if($3 == ""){
+                ages["None"]++;
+            }
+        } END {
+            printf("0-5   : %d\n", ages["0-5"]);
+            printf("6-15  : %d\n", ages["6-15"]);
+            printf("16-25 : %d\n", ages["16-25"]);
+            printf("26-35 : %d\n", ages["26-35"]);
+            printf("36-45 : %d\n", ages["36-45"]);
+            printf("46-55 : %d\n", ages["46-55"]);
+            printf("56-65 : %d\n", ages["56-65"]);
+            printf("66-75 : %d\n", ages["66-75"]);
+            printf("76-85 : %d\n", ages["76-85"]);
+            printf("86-95 : %d\n", ages["86-95"]);
+            printf("96-105: %d\n", ages["96-105"]);
+            printf(">105  : %d\n", ages[">105"]);
+            if(ages["None"]>0){
+                printf("None  : %d\n", ages["None"]);
+            }
+        }')
+
+			echo "$OUT"
+		fi
+		;;
+	daily)
+		if [ -n "$WIDTH" ]; then
+			OUT=$(echo "$FILTERED" | awk -v width="$WIDTH" -F, \
+				'{
+                if($2 != ""){
+                    days[$2]++;
+                }
+                if($2 == ""){
+                    days["None"]++;
+                }
+            } END {
+                max=0;
+                for (day in days) 
+                {
+                    if(days[day]>max){
+                        max=days[day];
+                    }   
+                }
+                width=max/width;
+            
+                for(day in days){
+                    if(day != "None")
+                    {
+                        printf("%s: ", day);
+                        for(i=0;i<(days[day]/width)-(days[day]/width)%1;i++)
+                        {
+                            printf("#");
+                        }
+                        printf("\n");
+                    }
+                }
+                if(days["None"] > 0)
+                {
+                    printf("None: ");
+                    for(i=0;i<(days["None"]/width)-(days["None"]/width)%1;i++)
+                    {
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+            }' | sort)
+			echo "$OUT"
+		elif [ "$NO_WIDTH" = "-s" ]; then
+			OUT=$(echo "$FILTERED" | awk -F, \
+				'{
+            if($2 != ""){
+                days[$2]++;
+            }
+            if($2 == ""){
+                days["None"]++;
+            }
+        } END {
+            for(day in days){
+                if(day != "None"){
+                    printf("%s: ", day);
+                    for(i=0;i<(days[day]/500)-(days[day]/500)%1;i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+            }
+            if(days["None"] > 0)
+            {
+                printf("None: ");
+                for(i=0;i<(days["None"]/500)-(days["None"]/500)%1;i++)
+                {
+                    printf("#");
+                }
+                printf("\n");
+            }
+        }' | sort)
+			echo "$OUT"
+		else
+			OUT=$(echo "$FILTERED" | awk -F, '{if($2 != "") days[$2]++} END {for (day in days) {printf("%s: %s\n", day, days[day])}}' | sort)
+			echo "$OUT"
+			OUT=$(echo "$FILTERED" | awk -F, '{if($2 == "") print $0}' | wc -l)
+			if [ "$OUT" -gt 0 ]; then
+				echo "None: $OUT"
+			fi
+		fi
+
+		;;
+	monthly)
+		if [ -n "$WIDTH" ]; then
+			OUT=$(echo "$FILTERED" | awk -v width="$WIDTH" -F, \
+				'{
+                if($2 != ""){
+                    months[substr($2, 1, 7)]++;
+                }
+                if($2 == ""){
+                    months["None"]++;
+                }
+            } END {
+                max=0;
+                for (month in months) 
+                {
+                    if(months[month]>max){
+                        max=months[month];
+                    }   
+                }
+                width=max/width;
+            
+                for(month in months){
+                    if(month != "None")
+                    {
+                        printf("%s: ", month);
+                    }
+                    for(i=0;i<(months[month]/width)-(months[month]/width)%1;i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                    }
+                }
+                if(months["None"] > 0){
+                    printf("None: ");
+                    for(i=0;i<(months["None"]/width)-(months["None"]/width)%1;i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+            }' | sort)
+			echo "$OUT"
+		elif [ "$NO_WIDTH" = "-s" ]; then
+			OUT=$(echo "$FILTERED" | awk -F, \
+				'{
+            if($2 != ""){
+                months[substr($2, 1, 7)]++;
+            }
+            if($2 == ""){
+                months["None"]++;
+            }
+        } END {
+            for(month in months){
+                if(month != "None")
+                {
+                    printf("%s: ", month);
+                    for(i=0;i<(months[month]/10000)-(months[month]/10000)%1;i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+            }
+            if(months["None"] > 0){
+                printf("None: ");
+                for(i=0;i<(months["None"]/10000)-(months["None"]/10000)%1;i++){
+                    printf("#");
+                }
+                printf("\n");
+                }
+            }' | sort)
+			echo "$OUT"
+		else
+			OUT=$(echo "$FILTERED" | awk -F, '{if($2 != "") months[substr($2, 1, 7)]++} END {for (month in months) {printf("%s: %s\n", month, months[month])}}' | sort)
+			echo "$OUT"
+			OUT=$(echo "$FILTERED" | awk -F, '{if($2 == "") print $0}' | wc -l)
+			if [ "$OUT" -gt 0 ]; then
+				echo "None: $OUT"
+			fi
+		fi
+		;;
+	yearly)
+		if [ -n "$WIDTH" ]; then
+			OUT=$(echo "$FILTERED" | awk -v width="$WIDTH" -F, \
+				'{
+                if($2 != ""){
+                    years[substr($2, 1, 4)]++;
+                }
+                if($2 == ""){
+                    years["None"]++;
+                }
+                
+            } END {
+                max=0;
+                for (year in years) 
+                {
+                    if(years[year]>max){
+                        max=years[year];
+                    }   
+                }
+                width=max/width;
+                for(year in years){
+                    if(year != "None")
+                    {
+                        printf("%s: ", year);
+                        for(i=0;i<(years[year]/width)-(years[year]/width)%1;i++){
+                            printf("#");
+                        }
+                        printf("\n");
+                    }
+                }
+                if(years["None"] > 0)
+                {
+                    printf("None: ");
+                    for(i=0;i<(years["None"]/width)-(years["None"]/width)%1;i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+            }' | sort)
+			echo "$OUT"
+		elif [ "$NO_WIDTH" = "-s" ]; then
+			OUT=$(echo "$FILTERED" | awk -F, \
+				'{
+                if($2 != ""){
+                    years[substr($2, 1, 4)]++;
+                }
+                if($2 == ""){
+                    years["None"]++;
+                }
+            } END {
+                for(year in years){
+                    if(year != "None")
+                    {
+                        printf("%s: ", year);
+                        for(i=0;i<(years[year]/100000)-(years[year]/100000)%1;i++){
+                            printf("#");
+                        }
+                        printf("\n");
+                    }
+                }
+                if(years["None"] > 0){
+                    printf("None: ");
+                    for(i=0;i<(years["None"]/100000)-(years["None"]/100000)%1;i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+            }' | sort)
+			echo "$OUT"
+		else
+			OUT=$(echo "$FILTERED" | awk -F, '{if($2 != "") years[substr($2, 1, 4)]++} END {for (year in years) {printf("%s: %s\n", year, years[year])}}' | sort)
+			echo "$OUT"
+			OUT=$(echo "$FILTERED" | awk -F, '{if($2 == "") print $0}' | wc -l)
+			if [ "$OUT" -gt 0 ]; then
+				echo "None: $OUT"
+			fi
+		fi
+		;;
+	countries)
+		if [ -n "$WIDTH" ]; then
+			OUT=$(echo "$FILTERED" | awk -F, \
+				'{
+            if($8 != "CZ" && $7 == 1 && $8 != "")
+            {
+                countries[$8]++;
+            }
+        } END {
+            max=0;
+            for(country in countries){
+                if(countries[country]>max){
+                    max=countries[country];
+                }
+            }
+            width=width/max;
+            for (country in countries)
+            {
+                printf("%s: ", country);
+                for(i=0;i<(countries[country]/width)-(countries[country]/width)%1;i++)
+                {
+                    printf("#");
+                }
+                printf("\n");
+            }
+        }' | sort)
+			echo "$OUT"
+		elif [ "$NO_WIDTH" = "-s" ]; then
+			OUT=$(echo "$FILTERED" | awk -F, \
+				'{
+            if($8 != "CZ" && $7 == 1 && $8 != "")
+            {
+                countries[$8]++;
+            }
+        } END {
+                for(country in countries){
+                printf("%s: ", country);
+                for(i=0;i<(countries[country]/100)-(countries[country]/100)%1;i++){
+                    printf("#");
+                }
+                printf("\n");
+            }
+        }' | sort)
+			echo "$OUT"
+		else
+			OUT=$(echo "$FILTERED" | awk -F, '{if($8 != "CZ" && $7 == 1 && $8 != "") countries[$8]++} END {for (country in countries) {printf("%s: %s\n", country, countries[country])}}' | sort)
+			echo "$OUT"
+		fi
+		;;
+	districts)
+		if [ -n "$WIDTH" ]; then
+			OUT=$(echo "$FILTERED" | awk -v width="$WIDTH" -F, \
+				'{  
+                if($6 == ""){
+                    districts["None"]++;
+                }
+                if($6 != ""){
+                    districts[$6]++;
+                }
+            } END {
+                max=0;
+                for (district in districts){
+                    if(districts[district]>max){
+                        max=districts[district];
+                    }
+                }
+                width=max/width;
+                for (district in districts) {
+                    if(district != "None"){
+                        printf("%s: ", district);
+                        for(i=0;i<(districts[district]/width)-(districts[district]/width)%1;i++){
+                            printf("#");
+                        }
+                        printf("\n");
+                    }
+                }
+                if(districts["None"] > 0){
+                    printf("None: ");
+                    for(i=0;i<(districts["None"]/width)-(districts["None"]/width)%1;i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+            }' | sort)
+			echo "$OUT"
+		elif [ "$NO_WIDTH" = "-s" ]; then
+			OUT=$(echo "$FILTERED" | awk -F, \
+				'{  
+                if($6 == ""){
+                    districts["None"]++;
+                }
+                if($6 != ""){
+                    districts[$6]++;
+                }
+            } END {
+                for (district in districts) {
+                    if(district != "None"){
+                        printf("%s: ", district);
+                        for(i=0;i<(districts[district]/1000)-(districts[district]/1000)%1;i++){
+                            printf("#");
+                        }
+                        printf("\n");
+                    }
+                }
+                if(districts["None"] > 0){
+                    printf("None: ");
+                    for(i=0;i<(districts["None"]/1000)-(districts["None"]/1000)%1;i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+            }' | sort)
+			echo "$OUT"
+		else
+			OUT=$(echo "$FILTERED" | awk -F, '{if($6 != "") districts[$6]++} END {for (district in districts) {printf("%s: %s\n", district, districts[district])}}' | sort)
+			echo "$OUT"
+			OUT=$(echo "$FILTERED" | awk -F, '{if($6 == "") print $0}' | wc -l)
+			if [ "$OUT" -gt 0 ]; then
+				echo "None: $OUT"
+			fi
+		fi
+		;;
+	regions)
+		if [ -n "$WIDTH" ]; then
+			OUT=$(echo "$FILTERED" | awk -v width="$WIDTH" -F, \
+				'{  
+                if($5 == ""){
+                    regions["None"]++;
+                }
+                if($5 != ""){
+                    regions[$5]++;
+                }
+            } END {
+                max=0;
+                for (region in regions){
+                    if(regions[region]>max){
+                        max=regions[region];
+                    }
+                }
+                width=max/width;
+                for (region in regions) {
+                    if(region != "None") {
+                        printf("%s: ", region);
+                        for(i=0;i<(regions[region]/width)-(regions[district]/width)%1;i++){
+                            printf("#");
+                        }
+                        printf("\n");   
+                    }
+                }
+                if(regions["None"] > 0){
+                    printf("None: ");
+                    for(i=0;i<(regions["None"]/width)-(regions["None"]/width)%1;i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+            }' | sort)
+			echo "$OUT"
+		elif [ "$NO_WIDTH" = "-s" ]; then
+			OUT=$(echo "$FILTERED" | awk -v width="$WIDTH" -F, \
+				'{  
+                if($5 == ""){
+                    regions["None"]++;
+                }
+                if($5 != ""){
+                    regions[$5]++;
+                }
+            } END {
+                for (region in regions)
+                {
+                    if(region != "None")
+                    {
+                        printf("%s: ", region);
+                        for(i=0;i<(regions[region]/10000)-(regions[region]/10000)%1;i++){
+                            printf("#");
+                        }
+                        printf("\n");
+                    }
+                    
+                }
+                if(regions["None"] > 0){
+                    printf("None: ");
+                    for(i=0;i<(regions["None"]/10000)-(regions["None"]/10000)%1;i++){
+                        printf("#");
+                    }
+                    printf("\n");
+                }
+            }' | sort)
+			echo "$OUT"
+		else
+			OUT=$(echo "$FILTERED" | awk -F, '{if($5 != "") regions[$5]++} END {for (region in regions) {printf("%s: %s\n", region, regions[region])}}' | sort)
+			echo "$OUT"
+			OUT=$(echo "$FILTERED" | awk -F, '{if($5 == "") print $0}' | wc -l)
+			if [ "$OUT" -gt 0 ]; then
+				echo "None: $OUT"
+			fi
+		fi
+		;;
+esac
