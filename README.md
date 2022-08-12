@@ -8,3 +8,5 @@ This script filters and prints statistics of files with covid patients.
 ```./corona [-h] [FILTERS] [COMMMAND] [LOG [LOG2 [...]]```
 
 ```-h``` Prints help
+
+Rest of the important stuff is in the script help. Too lazy to rewrite it
